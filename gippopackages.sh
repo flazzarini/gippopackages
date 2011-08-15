@@ -12,29 +12,67 @@
 # md5sum, w3m, grep, sed, tr
 #
 # Author: Frank Lazzarini, Fabien Michel 2011
-# Version 1.1
+# Version 1.2
 #
 
-APPS='http://www.filehippo.com/download_ccleaner/ http://filehippo.com/download_process_explorer/ http://filehippo.com/download_antivir/ http://filehippo.com/download_hijackthis/ http://filehippo.com/download_spybot_search_destroy/ http://filehippo.com/download_7zip_32/ http://filehippo.com/download_winscp/ http://filehippo.com/download_firebird/ http://filehippo.com/download_notepad/ http://filehippo.com/download_virtualbox/ http://filehippo.com/download_filezilla/'
+APPS='ccleaner process_explorer antivir virtualbox filezilla hijackthis winscp 7zip_32 spybot_search_destroy notepad'
 URL="http://www.filehippo.com"
-REPO="/home/frank/upload/filehippo-repo"
+REPO="/tmp/filehippo-repo"
+TMPDIR="/tmp"
 KDEPOPUP=1
+
+function fetchSite() {
+  techcontent=$TMPDIR/techcontent.txt
+  techcontentsource=$TMPDIR/techcontentsource.txt
+  techcontentdownload=$TMPDIR/techcontentdownload.txt
+
+  if [ -n $1 ] && [ -w $TMPDIR ]; then 
+    cururl="$URL/download_$1/tech"
+    w3m -no-cookie -dump "$cururl" > $techcontent
+    w3m -no-cookie -dump_source "$cururl" > $techcontentsource
+    # Follow the download link
+    downloadlink=`grep -A 1 "id=\"dlbox" $techcontentsource | sed -n 's/^<a href="\(.*\)">./\1/p' | sed -e 's/\".*//'`
+    w3m -no-cookie -dump_source $cururl$downloadlink > $techcontentdownload
+
+    if [ $? -ne 0 ]; then echo "Failed to load $url" && exit 1; fi;
+  else
+    echo "Error fetching $1. Check if $TMPDIR is writeable."
+  fi
+}
+
+function getDetails() {
+  if [ -n $1 ]; then fetchSite $1; else exit 1; fi;
+  # Get all the details of off filehippo.com
+  title=`grep "Title:" $techcontent | awk '{ print $2}'`
+  #onfilename=`grep "Filename:" $techcontent | awk '{ print $2}'`
+  filename=`grep "Title:" $techcontent | sed -e 's/.*\://' | sed 's/ //g'`
+  filenameextension=`grep "Filename:"  $techcontent | sed -e 's/.*\.//'`
+  bit=`grep "Title:"  $techcontent | grep "("| sed -e 's/.*(//' | sed -e 's/)//'`
+  version=`grep "Title:" $techcontent`
+  onmd5=`grep "MD5 Checksum:"  $techcontent | awk '{ print $3 }'`
+  downloadlink=`grep "<a id=\"_ctl0_contentMain_lnkURL\" class=\"black\"" $techcontentdownload | sed -e 's/.*href=\"//' | sed -e 's/\".*//'`
+  ourfilename=$filename"."$filenameextension
+}
+
+function comparemd5() {
+  if [ $1 -eq $2 ]; then
+    return 1
+  else
+    return 0
+  fi
+}
+
+
 
 
 for app in $APPS; do
-  # Get all the details of off filehippo.com
-  title=`w3m -no-cookie -dump $app/tech/ | grep "Title:" | awk '{ print $2}'`
-  onfilename=`w3m -no-cookie -dump $app/tech/ | grep "Filename:" | awk '{ print $2}'`
-  filename=`w3m -no-cookie -dump $app/tech/ | grep "Title:" | sed -e 's/.*\://' | sed 's/ //g'`
-  filenameextension=`w3m -no-cookie -dump $app/tech/ | grep "Filename:" | sed -e 's/.*\.//'`
-  ourfilename=$filename"."$filenameextension
-  bit=`w3m -no-cookie -dump $app/tech/ | grep "Title:" | grep "("| sed -e 's/.*(//' | sed -e 's/)//'`
-  version=`w3m -no-cookie -dump $app/tech/ | grep "Title:"`
-  downloadlink1=`w3m -no-cookie -dump_source $app/tech/ | grep -A 1 "id=\"dlbox" | sed -n 's/^<a href="\(.*\)">./\1/p' | sed -e 's/\".*//'`
-  downloadlink2=`w3m -no-cookie -dump_source $URL$downloadlink1 | grep "<a id=\"_ctl0_contentMain_lnkURL\" class=\"black\"" | sed -e 's/.*href=\"//' | sed -e 's/\".*//'`
-  onmd5=`w3m -no-cookie -dump $app/tech/ | grep "MD5 Checksum:" | awk '{ print $3 }'`
+  getDetails $app
 
-
+  # Print out the details we've just collected
+  echo "----[ Title: $title ]----"
+  echo "Filename: $ourfilename"
+  echo "Download link: $URL$downloadlink"
+  echo "Md5 compare (online/local): $onmd5 / $mymd5"
 
   # Prelimary checks
   # Create the repo subdirectory if it doesn't exist
@@ -42,6 +80,7 @@ for app in $APPS; do
     mkdir "$REPO/$title$bit"
   fi
 
+  # Do we have the file already on the disk if so get the md5sum
   if [ -f "$REPO/$title$bit/$ourfilename" ]; then
     mymd5=`md5sum $REPO/$title$bit/$ourfilename | awk '{ print $1}' | tr [:lower:] [:upper:]`
   else
@@ -49,23 +88,16 @@ for app in $APPS; do
   fi
 
 
-  echo "----[ Title: $title ]----"
-  echo "Filename: $onfilename"
-  echo "Local Filename: $ourfilename"
-  echo "Download link: $URL$downloadlink2"
-  echo "Online md5: $onmd5"
-  echo "My md5    : $mymd5"
-
-
   # Check for new version
   # if online md5 differs from local md5 download new version
   if [ "$onmd5" != "$mymd5" ]; then
     echo "New Version available....downloading"
+
     if [ $KDEPOPUP = 1 ]; then
 	kdialog --title "getmypackages" --passivepopup "New version : $title" 10
     fi
 
-    wget --quiet -O "$REPO/$title$bit/$ourfilename" "$URL$downloadlink2"
+    wget --quiet -O "$REPO/$title$bit/$ourfilename" "$URL$downloadlink"
   else
     if [ ! -f "$REPO/$title$bit/$ourfilename" ]; then
       # we don't have it yet so get it
@@ -73,8 +105,11 @@ for app in $APPS; do
 	  kdialog --title "getmypackages" --passivepopup "New app : $title" 10
       fi
 
-      wget --quiet -O "$REPO/$title$bit/$ourfilename" "$URL$downloadlink2"
+      wget --quiet -O "$REPO/$title$bit/$ourfilename" "$URL$downloadlink"
     fi
   fi
 
-done;
+
+done
+
+exit 0
